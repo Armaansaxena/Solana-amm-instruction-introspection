@@ -1,76 +1,95 @@
-# AMM with Instruction Introspection Challenge
+# Solana AMM with Instruction Introspection (Anchor)
 
-This project implements a Constant Product Automated Market Maker (AMM) on Solana using the Anchor framework. It specifically addresses the Week 6 challenge to use **instruction introspection** to verify a token burn before a token payout in separate instructions.
+A constant-product AMM (`x * y = k`) on Solana, written in Rust with Anchor. Withdrawals are split into two instructions, `burn_lp` and `payout`, and `payout` uses instruction introspection to verify that a matching burn happened immediately before it in the same transaction. Built during the Turbin3 Builders Cohort.
 
-## Challenge Overview
+- **Stack:** Rust, Anchor, TypeScript (tests)
+- **Status:** Educational project, not audited. Do not use with real funds.
 
-The goal was to:
-1. Write an AMM from scratch.
-2. Separate the `withdraw` logic into two distinct instructions: `burn_lp_tokens` and `payout`.
-3. Use **instruction introspection** (via the `Instructions` sysvar) in the `payout` instruction to verify that a valid `burn_lp_tokens` instruction occurred in the same transaction immediately before it.
+## Features
 
-## Implementation Details
+- Pool creation, liquidity deposits and token swaps
+- Pool lock and unlock guards (deposits fail while the pool is locked)
+- Split withdrawal: `burn_lp` burns the user's LP tokens, `payout` returns the proportional share of the reserves
+- Instruction introspection through the `Instructions` sysvar, so a payout cannot happen without a preceding burn
+- TypeScript test suite covering the main flows and the failure cases
 
-### 1. Separate Instructions
-The withdrawal process is split into two program instructions:
-- `burn_lp`: Burns the user's LP tokens and records the amount in the instruction data.
-- `payout`: Verifies the burn and transfers the proportional share of pool reserves to the user.
+## How withdrawal works
 
-### 2. Instruction Introspection
-In the `payout` instruction, we use the `Instructions` sysvar to inspect the transaction's instruction list:
-- We load the current instruction index.
-- We fetch the previous instruction (`index - 1`).
-- We verify:
-    - The `program_id` matches our program.
-    - The instruction discriminator matches `burn_lp`.
-    - The `lp_amount` is extracted from the previous instruction's data.
-    - The `user` and `pool` accounts match the current context to prevent spoofing.
+The withdrawal is two program instructions in one transaction:
 
-### 3. Safety & Atomicity
-By using introspection, we ensure that:
-- Users cannot call `payout` without first burning tokens.
-- The `payout` amount is strictly tied to the amount burned in the preceding instruction.
-- The entire process is atomic within a single Solana transaction.
+1. **`burn_lp`** burns the user's LP tokens and records the amount in its instruction data.
+2. **`payout`** verifies the burn and transfers the proportional share of the pool's reserves to the user.
 
-## Project Structure
-- `programs/amm/src/instructions/burn_lp.rs`: Implementation of the LP token burn.
-- `programs/amm/src/instructions/payout.rs`: Implementation of the payout with introspection logic.
-- `programs/amm/src/lib.rs`: Program entry points.
-- `tests/amm_tests.ts`: Comprehensive test suite covering initialization, deposit, swap, and the split withdrawal process (including failure cases).
+In `payout`, the program reads the `Instructions` sysvar and:
 
-## Getting Started
+- loads the index of the current instruction,
+- fetches the instruction immediately before it (`index - 1`),
+- checks that its `program_id` is this program and its discriminator is `burn_lp`,
+- reads the burned `lp_amount` from that instruction's data,
+- checks that the `user` and `pool` accounts match the current context, so a burn for a different user or pool cannot be reused.
 
-### Prerequisites
-- Solana Tool Suite
-- Anchor Framework
-- Node.js & Yarn
+Because both instructions are in the same transaction, they succeed or fail together. A `payout` without a matching `burn_lp` right before it is rejected, and the payout amount is tied to the amount burned.
 
-### Installation
-```bash
-cd amm
-yarn install
+## Tests
+
+The suite is in `tests/amm_tests.ts`. All 8 tests pass:
+
+1. Initializes the pool
+2. Deposits liquidity (first deposit)
+3. Swaps token0 for token1
+4. Withdraws liquidity (split instructions with introspection)
+5. Fails to payout without a burn instruction
+6. Fails to payout if the burn instruction is in the wrong order
+7. Locks the pool and fails to deposit
+8. Unlocks the pool and allows deposit
+
+
+![Tests Passing](./test-passing-2.png)
+
+
+## Project structure
+
+```
+programs/amm/src/
+├── lib.rs                  # Program entrypoint and routing
+└── instructions/
+    ├── burn_lp.rs          # Burns LP tokens, records the amount
+    └── payout.rs           # Verifies the burn via introspection, pays out
+tests/
+└── amm_tests.ts            # TypeScript test suite
 ```
 
-### Running Tests
+## Getting started
+
+### Prerequisites
+
+- Rust and the Solana CLI
+- Anchor CLI, using the version pinned in `Anchor.toml`
+- Node.js and Yarn
+
+### Install
+
+```bash
+git clone https://github.com/Armaansaxena/Solana-amm-instruction-introspection
+cd Solana-amm-instruction-introspection
+npm install
+```
+
+### Run the tests
+
 ```bash
 anchor test
 ```
 
-## Test Results
-All 8 tests passed successfully, including:
-- Initializing the pool
-- Depositing liquidity
-- Swapping tokens
-- Withdrawing liquidity via split instructions
-- Pool Lock Guards: Operations fail when locked and succeed when unlocked
-- Failure case: Payout without burn
-- Failure case: Payout with burn in wrong order
+## Known limitations
 
-## Screenshot
+- Not audited. This is a learning project.
+- Constant-product pricing only: no oracle, no concentrated liquidity, no multi-hop routing.
 
-![Tests Passing](./test-passing-2.png) Initializing the pool
-- Depositing liquidity
-- Swapping tokens
-- Withdrawing liquidity via split instructions
-- Failure case: Payout without burn
-- Failure case: Payout with burn in wrong order
+## Related
+
+The basic version of this AMM (without introspection): https://github.com/Armaansaxena/Constant-Product-AMM
+
+## Author
+
+Armaan Saxena. [GitHub](https://github.com/Armaansaxena)
